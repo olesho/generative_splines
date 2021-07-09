@@ -1,5 +1,6 @@
 pub mod screen {
     extern crate minifb;
+    use std::{thread, time};
     use std::usize;
     use minifb::{Key, Window, WindowOptions};
     use std::sync::mpsc::{channel, Sender, Receiver};
@@ -9,12 +10,12 @@ pub mod screen {
         buffer: Vec<u32>,
         f64rgba: [f64; 4],
         rgba: [u8; 4],
-        pub tx: Sender<ndarray::Array2<f64>>,
-        rx: Receiver<ndarray::Array2<f64>>,
+        pub tx: Sender<Option<ndarray::Array2<f64>>>,
+        rx: Receiver<Option<ndarray::Array2<f64>>>,
     }
 
     pub fn new (w: usize, h: usize) -> Screen {
-        let (tx, rx): (Sender<ndarray::Array2<f64>>, Receiver<ndarray::Array2<f64>>) = channel();
+        let (tx, rx): (Sender<Option<ndarray::Array2<f64>>>, Receiver<Option<ndarray::Array2<f64>>>) = channel();
         let f64rgba = [1.0, 0.0, 0.0, 0.0];
         Screen{
             width: w,
@@ -101,22 +102,38 @@ pub mod screen {
             // Limit to max ~60 fps update rate
             window.limit_update_rate(Some(std::time::Duration::from_micros(16600)));
             while window.is_open() && !window.is_key_down(Key::Escape) {
+                //match self.rx.recv_timeout(std::time::Duration::from_millis(1000)) {
                 match self.rx.recv() {
-                    Ok(xys) => {
-                        for row in xys.rows().into_iter() {
-                            if !(row[0] > 1.0 || row[0] < 0.0 || row[1] > 1.0 || row[1] < 0.0) {
-                                self.dot(row[0], row[1]);
+                    Ok(opt_xys) => {
+                        match opt_xys {
+                            Some(xys) => {
+                                for row in xys.rows().into_iter() {
+                                    if !(row[0] > 1.0 || row[0] < 0.0 || row[1] > 1.0 || row[1] < 0.0) {
+                                        self.dot(row[0], row[1]);
+                                    }
+                                }
+        
+                                window
+                                    .update_with_buffer(&self.buffer, self.width, self.height)
+                                    .unwrap();
+                            },
+                            None => {
+                                break;
                             }
                         }
 
-                        window
-                            .update_with_buffer(&self.buffer, self.width, self.height)
-                            .unwrap();
                     },
                     Err(_) => {
-                        break;
+                        break
+                     
                     }
                 }
+            }
+            println!("done rendering");
+            while window.is_open() && !window.is_key_down(Key::Escape) {
+                window
+                .update_with_buffer(&self.buffer, self.width, self.height)
+                .unwrap();
             }
         }    
     }
