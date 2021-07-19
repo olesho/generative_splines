@@ -2,6 +2,8 @@ pub mod spl {
     use std::thread::JoinHandle;
     use std::{thread, time};
     use ndarray::Array1;
+    use num::Complex;
+    use num::traits::Pow;
     use rand::Rng;
     use std::ops::{Add, Mul};
     use std::f64::consts::PI;
@@ -127,21 +129,42 @@ pub mod spl {
         ndarray::stack(ndarray::Axis(1), &[arr1(&ax).view(), arr1(&ay).view()]).unwrap()
     }
 
-    pub fn fill_circle(tx: Sender<ndarray::Array2<f64>>) {
-        thread::spawn(move || {
-            let mut rng = rand::thread_rng();
-            let pnum: usize = 10000;
-            let shift = rng.gen_range(0.0..TWOPI);
-            let a2 = Array1::linspace(0.0, TWOPI, pnum);
-            let a = a2.map(|n| n + shift);
-    
-            let path_stack = ndarray::stack(ndarray::Axis(1), &[a.map(|n| n.cos()).view(), a.map(|n| n.sin()).view()]).unwrap();
-            //let scale_path = rng.gen_range(0.1..0.5);
-            //let path = path_stack.map(|n| n*scale_path+0.5);
+    fn circle(x: f64, y: f64, segments: usize, scale: f64) -> ndarray::Array2<f64> {
+        let a = Array1::linspace(0.0, TWOPI, segments);
+        ndarray::stack(ndarray::Axis(1), &[a.map(|n| n.cos() * scale/2.0 + y).view(), a.map(|n| n.sin() * scale/2.0 + x).view()])
+            .unwrap()
+    }
 
-            for _ in 0..10000 {
-                tx.send(path_stack.clone()).unwrap();
-            }
+    fn f(theta: f64) -> Complex<f64> {
+        Complex::new(1.0, theta).exp()
+    }
+
+    fn f1(theta: f64) -> Complex<f64> {
+        Complex::new(1.0, 10.0 * theta).exp()*0.01 
+            + Complex::new(3.0, -3.0 * theta).exp()*0.01
+            + Complex::new(0.5, -0.5 * theta).exp()*0.001
+    }
+
+    fn complex_circle() -> ndarray::Array2<f64> {
+        let l = Array1::linspace(0.0, TWOPI, 10000);
+        let c = l.map(|theta| f1(*theta));
+        let x = c.map(|n| n.re + 0.5);
+        let y = c.map(|n| n.im + 0.5);
+        ndarray::stack(ndarray::Axis(1), &[x.view(), y.view()]).unwrap()
+    }
+
+    #[test]
+    fn test_complex_circle() {
+        complex_circle();
+    }
+
+    pub fn fill_circle(tx: Sender<Option<ndarray::Array2<f64>>>) {
+        thread::spawn(move || {
+            let path = complex_circle();
+            println!("{:?}", path);
+            //let path = circle(0.0, 0.0, 10000, 1.0);
+            tx.send(Some(path.clone())).unwrap();
+            tx.send(None).unwrap();
         });
     }
 
@@ -163,12 +186,12 @@ pub mod spl {
             let scale = Array::range(-1.0 * (pnum as f64)*STP / 2.0, (pnum as f64)*STP / 2.0, STP );
             
 
-            let mut s = new(path, INUM, scale);
+            let mut s = new(path, ( INUM as f64 * scale_path * 5.0 ) as u32, scale);
 
             for _ in 0..10000 {
                 tx.send(Some(s.next())).unwrap();
             }
-            tx.send(None);
+            tx.send(None).unwrap();
         })
     }
 
@@ -200,7 +223,7 @@ pub mod spl {
         pub points: usize,// = 6;
     }
 
-    pub fn fill_spline_hieroglyph(tx: Sender<ndarray::Array2<f64>>, opts: HieroglyphOpts) {
+    pub fn fill_spline_hieroglyph(tx: Sender<Option<ndarray::Array2<f64>>>, opts: HieroglyphOpts) {
         thread::spawn(move || {
             for i in 0..opts.row_count {
                 for j in 0..opts.col_count {
@@ -214,7 +237,7 @@ pub mod spl {
                     let y2 = y1 + opts.width;
 
                     let d = new_spline(x1, x2, y1, y2, opts.points);
-                    tx.send(d).unwrap();
+                    tx.send(Some(d)).unwrap();
                 }
             }
         });

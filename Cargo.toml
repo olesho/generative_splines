@@ -13,6 +13,7 @@ ndarray-rand ="*"
 peroxide = "*"
 rand = "*"
 cubic_spline = "*"
+num = "*"
 
 # [toolchain.optional]
 # rust-std = ["x86_64-pc-windows-gnu"]
