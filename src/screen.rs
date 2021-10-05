@@ -1,124 +1,109 @@
 pub mod screen {
     extern crate minifb;
+    use std::{thread::sleep, time::Duration};
     use std::usize;
     use minifb::{Key, Window, WindowOptions};
-    use std::sync::mpsc::{channel, Sender, Receiver};
+    use std::sync::{Arc, Mutex};
     pub struct Screen {
         width: usize,
         height: usize,
         buffer: Vec<u32>,
         f64rgba: [f64; 4],
         rgba: [u8; 4],
-        pub tx: Sender<ndarray::Array2<f64>>,
-        rx: Receiver<ndarray::Array2<f64>>,
     }
 
     pub fn new (w: usize, h: usize) -> Screen {
-        let (tx, rx): (Sender<ndarray::Array2<f64>>, Receiver<ndarray::Array2<f64>>) = channel();
-        let f64rgba = [1.0, 0.0, 0.0, 0.0];
+        let f64rgba = [0.0, 0.0, 0.0, 0.0];
         Screen{
             width: w,
             height: h,
             buffer: vec![0; w * h],
-            f64rgba: f64rgba,
+            f64rgba,
             rgba: as_u8(&f64rgba),
-            tx,
-            rx,
+        }
+    }
+    
+    pub fn set_color(screen: Arc<Mutex<Screen>>, f64rgba: [f64; 4]) {
+        let m  = Arc::clone(&screen);
+        let mut s = m.lock().unwrap();
+
+        s.f64rgba[0] = f64rgba[0];
+        s.f64rgba[1] = f64rgba[1] * f64rgba[0];
+        s.f64rgba[2] = f64rgba[2] * f64rgba[0];
+        s.f64rgba[3] = f64rgba[3] * f64rgba[0];
+        s.rgba = as_u8(&s.f64rgba);
+
+        std::mem::drop(s);
+    }
+
+    pub fn set_bg(screen: Arc<Mutex<Screen>>, f64rgba: [f64; 4]) {
+        let m  = Arc::clone(&screen);
+        let mut s = m.lock().unwrap();
+        let rgba = as_u8(&f64rgba);
+        s.buffer.fill(as_u32_be(&rgba));
+    }
+
+    pub fn send_buf(screen: Arc<Mutex<Screen>>, xys: ndarray::Array2<f64>) {
+        let m  = Arc::clone(&screen);
+        let mut s = m.lock().unwrap();
+        for row in xys.rows().into_iter() {
+            if !(row[0] > 1.0 || row[0] < 0.0 || row[1] > 1.0 || row[1] < 0.0) {
+                let xf64 = row[0];
+                let yf64 = row[1];
+                
+                let mut x = (s.width as f64 * xf64) as usize;
+                if x >= s.width {
+                    x = s.width-1;
+                }
+                let mut y = (s.height as f64 * yf64) as usize;
+                if y >= s.height {
+                    y = s.height-1;
+                }
+    
+                let mut current = as_f64(&u32_to_u8(s.buffer[x * s.width + y]));
+    
+                let invaa = 1.0 - s.f64rgba[0];
+                current[0] = s.f64rgba[0] + current[0] * invaa;
+                current[1] = s.f64rgba[1] + current[1] * invaa;
+                current[2] = s.f64rgba[2] + current[2] * invaa;
+                current[3] = s.f64rgba[3] + current[3] * invaa;
+    
+                let w = s.width;
+                s.buffer[x * w + y] = as_u32_be(&as_u8(&current));
+            }
+        }
+
+        std::mem::drop(s);
+    }
+
+    pub fn render(screen: Arc<Mutex<Screen>>) {     
+        let m  = Arc::clone(&screen);
+        let s = m.lock().unwrap();
+        let mut window = Window::new(
+            "Test - ESC to exit",
+            s.width,
+            s.height,
+            WindowOptions::default(),
+        )
+        .unwrap_or_else(|e| {
+            panic!("{}", e);
+        });
+        std::mem::drop(s);
+
+        window.limit_update_rate(Some(std::time::Duration::from_micros(16600)));
+        while window.is_open() && !window.is_key_down(Key::Escape) {
+            {
+                let s = m.lock().unwrap();                
+                window
+                    .update_with_buffer(&s.buffer, s.width, s.height)
+                    .unwrap();
+
+            }
+            sleep(Duration::from_millis(500));
         }
     }
 
     impl Screen {
-        pub fn set_color(&mut self, f64rgba: [f64; 4]) {
-            self.f64rgba[0] = f64rgba[0];
-            self.f64rgba[1] = f64rgba[1] * f64rgba[0];
-            self.f64rgba[2] = f64rgba[2] * f64rgba[0];
-            self.f64rgba[3] = f64rgba[3] * f64rgba[0];
-            self.rgba = as_u8(&self.f64rgba);
-        }
-
-        pub fn set_bg(&mut self, f64rgba: [f64; 4]) {
-            let rgba = as_u8(&f64rgba);
-            self.buffer.fill(as_u32_be(&rgba));
-        }
-
-        pub fn dot(&mut self, xf64: f64, yf64: f64) {
-            let mut x = (self.width as f64 * xf64) as usize;
-            if x >= self.width {
-                x = self.width-1;
-            }
-            let mut y = (self.height as f64 * yf64) as usize;
-            if y >= self.height {
-                y = self.height-1;
-            }
-
-            let mut current = as_f64(&u32_to_u8(self.buffer[x * self.width + y]));
-
-            let invaa = 1.0 - self.f64rgba[0];
-            current[0] = self.f64rgba[0] + current[0] * invaa;
-            current[1] = self.f64rgba[1] + current[1] * invaa;
-            current[2] = self.f64rgba[2] + current[2] * invaa;
-            current[3] = self.f64rgba[3] + current[3] * invaa;
-
-            self.buffer[x * self.width + y] = as_u32_be(&as_u8(&current)); //as_u32_be(&self.rgba);
-        }
-
-        pub fn dots(&mut self, xy: ndarray::Array2<f64>) {
-            for row in xy.rows().into_iter() {
-                if !(row[0] > 1.0 || row[0] < 0.0 || row[1] > 1.0 || row[1] < 0.0) {
-                    let mut x = (self.width as f64 * row[0]) as usize;
-                    if x >= self.width {
-                        x = self.width-1;
-                    }
-                    let mut y = (self.height as f64 * row[1]) as usize;
-                    if y >= self.height {
-                        y = self.height-1;
-                    }
-        
-                    let mut current = as_f64(&u32_to_u8(self.buffer[x * self.width + y]));
-        
-                    let invaa = 1.0 - self.f64rgba[0];
-                    current[0] = self.f64rgba[0] + current[0] * invaa;
-                    current[1] = self.f64rgba[1] + current[1] * invaa;
-                    current[2] = self.f64rgba[2] + current[2] * invaa;
-                    current[3] = self.f64rgba[3] + current[3] * invaa;
-        
-                    self.buffer[x * self.width + y] = as_u32_be(&as_u8(&current));
-                }
-            }
-        }
-
-        pub fn render(&mut self) {           
-            let mut window = Window::new(
-                "Test - ESC to exit",
-                self.width,
-                self.height,
-                WindowOptions::default(),
-            )
-            .unwrap_or_else(|e| {
-                panic!("{}", e);
-            });
-
-            // Limit to max ~60 fps update rate
-            window.limit_update_rate(Some(std::time::Duration::from_micros(16600)));
-            while window.is_open() && !window.is_key_down(Key::Escape) {
-                match self.rx.recv() {
-                    Ok(xys) => {
-                        for row in xys.rows().into_iter() {
-                            if !(row[0] > 1.0 || row[0] < 0.0 || row[1] > 1.0 || row[1] < 0.0) {
-                                self.dot(row[0], row[1]);
-                            }
-                        }
-
-                        window
-                            .update_with_buffer(&self.buffer, self.width, self.height)
-                            .unwrap();
-                    },
-                    Err(_) => {
-                        break;
-                    }
-                }
-            }
-        }    
     }
 
     fn as_u8(array: &[f64; 4]) -> [u8; 4] {

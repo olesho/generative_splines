@@ -1,5 +1,4 @@
 pub mod spl {
-    use std::thread::JoinHandle;
     use std::{thread, time};
     use ndarray::Array1;
     use rand::Rng;
@@ -9,10 +8,13 @@ pub mod spl {
     use ndarray_rand::RandomExt;
     use ndarray_rand::rand_distr::Uniform;
     use std::sync::mpsc::{Sender};
+    use std::sync::{Arc, Mutex};
+
+    use crate::screen::screen::{Screen, send_buf};
 
     const TWOPI: f64 = 2.0 * PI;
-    const STP: f64 = 0.00000003;
-    const INUM: u32 = 16;
+    const STP: f64 = 0.000002;
+    const INUM: u32 = 120;
     struct Spline {
         g: f64,
         path: ndarray::Array2<f64>,
@@ -58,57 +60,6 @@ pub mod spl {
         }
     }
 
-   
-    // peroxide cubic spline
-    // fn rnd_interpolate(xy: &mut ndarray::Array2<f64>, num_points: usize) -> Array2<f64> {
-    //     extern crate peroxide;
-    //     use peroxide::*;
-    //     use peroxide::prelude::{CubicSpline, cubic_spline};
-    //     let x = xy.column(0).to_vec();
-    //     let y = xy.column(1).to_vec();
-    //     let spline = cubic_spline(&x, &y);
-    //     let new_xx = Array1::linspace(0.0, 1.0, num_points);
-    //     let new_yy = new_xx.clone().map(|n| spline.eval(*n));
-    //     ndarray::stack(ndarray::Axis(1), &[new_xx.view(), new_yy.view()]).unwrap()
-    // }
-
-    // splines v4.0.0
-    // fn rnd_interpolate(xy: &mut ndarray::Array2<f64>, num_points: usize) -> Array2<f64> {
-    //     use splines::{Interpolation, Key, Spline};
-    //     let mut vec: Vec<Key<f64, f64>> = Vec::<Key<f64, f64>>::with_capacity(xy.column(0).len());
-    //     for r in xy.rows() {
-    //         // vec.push( Key::new(r[0], r[1], Interpolation::Cosine));
-    //         if vec.len() == 0 {
-    //             vec.push( Key::new(r[0], r[1], Interpolation::Linear));
-    //         } else {
-    //             vec.push( Key::new(r[0], r[1], Interpolation::Step(0.1)));
-    //         }
-    //     }
-    //     let spline = Spline::from_vec(vec);
-
-    //     let new_xx = Array1::linspace(0.0, 1.0, num_points);
-    //     let new_yy = new_xx.map(|n| spline.clamped_sample(*n).unwrap());
-    //     ndarray::stack(ndarray::Axis(1), &[new_xx.view(), new_yy.view()]).unwrap()
-    // }
-
-    // csaps 0.3.0 (not working: needs sequence)
-    // fn rnd_interpolate(xy: &mut ndarray::Array2<f64>, num_points: usize) -> Array2<f64> {
-    //     use csaps::CubicSmoothingSpline;
-    //     let x = xy.column(0).to_vec();
-    //     let y = xy.column(1).to_vec();
-    //     let spline = CubicSmoothingSpline::new(&x, &y)
-    //     .make()
-    //     .unwrap();
-    //     let xx = Array1::random(num_points, Uniform::new(0., 1.));
-    //     let mut xx_vec = xx.into_raw_vec();
-    //     xx_vec.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    //     let yy = spline.evaluate(&xx_vec).unwrap();
-    //     let yy_vec = yy.to_vec();
-    //     let new_yy = arr1(&yy_vec);
-    //     let new_xx = arr1(&xx_vec);
-    //     ndarray::stack(ndarray::Axis(1), &[new_xx.view(), new_yy.view()]).unwrap()
-    // }
-
     // cubic_spline v1.0.0 (working fine)
     fn rnd_interpolate(xy: &mut ndarray::Array2<f64>, num_segments: u32) -> Array2<f64> {
         use cubic_spline::{Points, Point, SplineOpts, TryFrom};
@@ -145,30 +96,25 @@ pub mod spl {
     }
 
 
-    pub fn fill_circle_splines (tx: Sender<ndarray::Array2<f64>>) -> JoinHandle<()> {
-        thread::spawn(move || {
-            let mut rng = rand::thread_rng();
-        
-            let scale_path= rng.gen_range(0.1..0.5);
-            let pnum: usize = rng.gen_range(70..150);
-            let shift = rng.gen_range(0.0..TWOPI);
+    pub fn fill_circle_splines (screen: Arc<Mutex<Screen>>) {
+        let mut rng = rand::thread_rng();
+    
+        let scale_path= rng.gen_range(0.1..0.4);
+        let pnum: usize = rng.gen_range(150..250);
+        let shift = rng.gen_range(0.0..TWOPI);
 
-            let a2 = Array1::linspace(0.0, TWOPI, pnum);
-            let a = a2.map(|n| n + shift);
+        let a2 = Array1::linspace(0.0, TWOPI, pnum);
+        let a = a2.map(|n| n + shift);
 
-            let path_stack = ndarray::stack(ndarray::Axis(1), &[a.map(|n| n.cos()).view(), a.map(|n| n.sin()).view()]).unwrap();
-            let path = path_stack.map(|n| n*scale_path);
+        let path_stack = ndarray::stack(ndarray::Axis(1), &[a.map(|n| n.cos()).view(), a.map(|n| n.sin()).view()]).unwrap();
+        let path = path_stack.map(|n| n * scale_path);
 
-            //let scale = Array::range(0., (pnum as f64)*STP, STP);
-            let scale = Array::range(-1.0 * (pnum as f64)*STP / 2.0, (pnum as f64)*STP / 2.0, STP );
-            
-
-            let mut s = new(path, INUM, scale);
-
-            for _ in 0..10000 {
-                tx.send(s.next()).unwrap();
-            }
-        })
+        //let scale = Array::range(0., (pnum as f64)*STP, STP);
+        let scale = Array::range(-1.0 * (pnum as f64)*STP / 2.0, (pnum as f64)*STP / 2.0, STP );
+        let mut s = new(path, INUM, scale);
+        for _ in 0..300 {
+            send_buf(screen.clone(), s.next());
+        }
     }
 
     pub fn fill_rand_splines(tx: Sender<ndarray::Array2<f64>>) {
@@ -177,7 +123,7 @@ pub mod spl {
 
         thread::spawn(move || {
             let mut rng = rand::thread_rng();
-            for _ in 0..1000 {
+            for _ in 0..2000 {
                 let r1 = Array::random((1, 4), Uniform::new(0., 1.));
                 let r2 = Array::random((1, 4), Uniform::new(0., 1.));
                 
