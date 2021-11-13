@@ -138,7 +138,7 @@ fn paint_random() {
         }, vec![
                 [rng.gen_range(-5.0..5.0), rng.gen_range(-5.0..5.0), rng.gen_range(-0.1..0.1)],
                 [rng.gen_range(-5.0..5.0), rng.gen_range(-5.0..5.0), rng.gen_range(-0.1..0.1)],
-                //[rng.gen_range(-5.0..5.0), rng.gen_range(-5.0..5.0), rng.gen_range(-0.1..0.1)],
+                [rng.gen_range(-5.0..5.0), rng.gen_range(-5.0..5.0), rng.gen_range(-0.1..0.1)],
             ]);
         renderWithTimeout(sm.clone());
     }
